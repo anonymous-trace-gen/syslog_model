@@ -1,7 +1,7 @@
 """
 Filter and rank causal links using event-count-aware scoring.
 
-Logic:
+Methodology:
   - Every event is classified by rarity from the actual telemetry counts.
   - The MAXIMUM POSSIBLE VOTES for an edge is determined by how many nodes
     observed the rarer of the two events (cause or effect).
@@ -14,37 +14,33 @@ Logic:
   - Both tiers (common + rare) are ranked by the same score and merged into
     one unified list.
 
-Outputs:
-  top_links.txt   — human-readable ranked table
-  top_links.csv   — full machine-readable output
+
 """
 import json
 import math
 import csv
 from pathlib import Path
 
-# ── Paths ─────────────────────────────────────────────────────────────────
-CAUSAL_GRAPH = Path("/lustre/orion/gen150/proj-shared/alz/aggregation-only/pcmciplus-results/causal_graph.json")
-EVENT_CSV    = Path("/lustre/orion/gen150/proj-shared/alz/aggregation-only/pcmciplus-results/event_count_distribution.csv")
-OUTPUT_TXT   = Path("/lustre/orion/gen150/proj-shared/alz/aggregation-only/pcmciplus-results/top_links.txt")
-OUTPUT_CSV   = Path("/lustre/orion/gen150/proj-shared/alz/aggregation-only/pcmciplus-results/top_links.csv")
+# Paths 
+CAUSAL_GRAPH = Path("./alz/aggregation-only/pcmciplus-results/causal_graph.json")
+EVENT_CSV    = Path("./alz/aggregation-only/pcmciplus-results/event_count_distribution.csv")
+OUTPUT_TXT   = Path("./alz/aggregation-only/pcmciplus-results/top_links.txt")
+OUTPUT_CSV   = Path("./alz/aggregation-only/pcmciplus-results/top_links.csv")
 
-GROUP_SIZE   = 8      # nodes per group — must match what was used in PCMCIplus run
+GROUP_SIZE   = 8   
 
-# ── P-value thresholds per rarity tier ───────────────────────────────────
-# Rarer events need stricter p-value to compensate for lower power.
-# These are applied to the combined p_comb value.
+# P-value thresholds per rarity tier 
 P_THRESHOLD = {
-    "ZERO":       None,    # never seen — skip entirely
-    "ULTRA_RARE": 1e-4,    # very strict: must be undeniable
-    "RARE":       1e-3,    # strict
-    "MODERATE":   5e-3,    # moderately strict
-    "COMMON":     1e-2,    # standard alpha
-    "VERY_COMMON":1e-2,    # standard alpha
+    "ZERO":       None,   
+    "ULTRA_RARE": 1e-4,   
+    "RARE":       1e-3,   
+    "MODERATE":   5e-3,   
+    "COMMON":     1e-2,   
+    "VERY_COMMON":1e-2,   
 }
 
-# ── Load event count distribution ────────────────────────────────────────
-event_info = {}   # event -> {total_count, nodes_with_event, rarity}
+# Load event count distribution 
+event_info = {}   
 with open(EVENT_CSV) as fh:
     for row in csv.DictReader(fh):
         event_info[row["event"]] = {
@@ -55,10 +51,7 @@ with open(EVENT_CSV) as fh:
 
 print(f"Loaded event info for {len(event_info)} events")
 
-# ── Compute max possible votes for each event ─────────────────────────────
-# max_possible_votes = floor(nodes_with_event / GROUP_SIZE)
-# This is the maximum number of groups that could EVER observe this event.
-# Minimum 1 to avoid division by zero for events seen on < GROUP_SIZE nodes.
+# Compute max possible votes for each event
 def max_votes_for_event(event: str) -> int:
     info = event_info.get(event)
     if info is None:
@@ -73,14 +66,13 @@ def rarity_of_edge(cause: str, effect: str) -> str:
     order = ["ZERO", "ULTRA_RARE", "RARE", "MODERATE", "COMMON", "VERY_COMMON"]
     r_cause  = event_info.get(cause,  {}).get("rarity", "VERY_COMMON")
     r_effect = event_info.get(effect, {}).get("rarity", "VERY_COMMON")
-    # return the rarer one (lower index in order = rarer)
     return r_cause if order.index(r_cause) < order.index(r_effect) else r_effect
 
 def p_threshold_for_edge(cause: str, effect: str) -> float:
     rarity = rarity_of_edge(cause, effect)
     return P_THRESHOLD.get(rarity, 1e-2)
 
-# ── Load causal graph ─────────────────────────────────────────────────────
+# Load causal graph
 with open(CAUSAL_GRAPH) as fh:
     data = json.load(fh)
 
@@ -90,7 +82,7 @@ total_groups = data["n_groups"] - data.get("n_groups_skipped", 0)
 print(f"Total links in causal_graph.json : {len(links):,}")
 print(f"Total eligible groups            : {total_groups}")
 
-# ── Score every link ──────────────────────────────────────────────────────
+# Score every link
 scored       = []
 skipped_zero = 0
 skipped_p    = 0
@@ -101,36 +93,29 @@ for lk in links:
     p_val  = lk["p_val"]
     votes  = lk["n_votes"]
 
-    # ── Determine edge rarity ──────────────────────────────────────────────
+    #  Determine edge rarity 
     edge_rarity = rarity_of_edge(cause, effect)
 
-    # ── Skip ZERO events — they were never observed ────────────────────────
+    # 
     if edge_rarity == "ZERO":
         skipped_zero += 1
         continue
 
-    # ── Apply rarity-aware p-value threshold ──────────────────────────────
+    
     p_thresh = p_threshold_for_edge(cause, effect)
     if p_val > p_thresh:
         skipped_p += 1
         continue
 
-    # ── Compute max possible votes for this edge ───────────────────────────
-    # Use the rarer event's node count — that is the bottleneck.
     max_v_cause  = max_votes_for_event(cause)
     max_v_effect = max_votes_for_event(effect)
     max_v        = min(max_v_cause, max_v_effect)   # bottleneck
 
-    # ── Vote fraction: votes / max_possible (not / total_groups) ──────────
-    # A rare-event link seen by 3/3 possible groups = 1.0 (perfect replication)
-    # A common link seen by 540/1080 groups          = 0.5
     vote_fraction = min(1.0, votes / max_v)
 
-    # ── Final score ────────────────────────────────────────────────────────
     log_p = -math.log10(max(p_val, 1e-300))
     score = vote_fraction * log_p
 
-    # ── Enrich link dict ───────────────────────────────────────────────────
     scored.append({
         **lk,
         "edge_rarity":    edge_rarity,
@@ -150,13 +135,11 @@ print(f"\nLinks skipped (ZERO events)      : {skipped_zero:,}")
 print(f"Links skipped (p > threshold)    : {skipped_p:,}")
 print(f"Links surviving                  : {len(scored):,}")
 
-# ── Rarity breakdown of surviving links ──────────────────────────────────
 print("\nSurviving links by edge rarity:")
 for tier in ["ULTRA_RARE", "RARE", "MODERATE", "COMMON", "VERY_COMMON"]:
     n = sum(1 for lk in scored if lk["edge_rarity"] == tier)
     print(f"  {tier:<12} : {n:>5,}")
 
-# ── Write TXT ─────────────────────────────────────────────────────────────
 HDR = (f"  {'SCORE':>7}  {'V_FRAC':>7}  {'VOTES':>6}  {'MAX_V':>6}  "
        f"{'P_COMB':>10}  {'RARITY':<12}  "
        f"{'CAUSE':<25} {'LAG':>4}  {'EDGE':>5}  {'EFFECT':<25}\n")

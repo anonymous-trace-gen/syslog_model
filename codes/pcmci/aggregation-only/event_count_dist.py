@@ -9,6 +9,7 @@ from pathlib import Path
 from multiprocessing import Pool
 import numpy as np
 import pyarrow.parquet as pq
+from mpi4py import MPI
 
 _TAG_WORK   = 1
 _TAG_RESULT = 2
@@ -72,9 +73,6 @@ def rarity_label(count: int) -> str:
     return next(lbl for lbl, lo, hi in RARITY_BANDS if lo <= count < hi)
 
 
-# ════════════════════════════════════════════════════════════════════════
-# Per-file worker
-# ════════════════════════════════════════════════════════════════════════
 
 def process_node(path_str: str) -> dict:
     t_node = time.time()
@@ -359,9 +357,6 @@ def run_worker_local(paths, output_dir, n_workers, t0):
                   errors, paths, output_dir, t0)
 
 
-# ════════════════════════════════════════════════════════════════════════
-# Entry point
-# ════════════════════════════════════════════════════════════════════════
 
 def main():
     ap = argparse.ArgumentParser()
@@ -375,7 +370,7 @@ def main():
     output_dir  = Path(args.output_dir)
 
     try:
-        from mpi4py import MPI
+        
         comm          = MPI.COMM_WORLD
         rank          = comm.Get_rank()
         size          = comm.Get_size()

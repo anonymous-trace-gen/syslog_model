@@ -1,19 +1,19 @@
 #!/bin/bash
 #SBATCH --job-name=pcmci_agg
-#SBATCH --account=gen150
+#SBATCH --account=
 #SBATCH --partition=batch
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 #SBATCH --time=00:30:00
-#SBATCH --output=/lustre/orion/gen150/proj-shared/alz/aggregation-only/logs/pcmci_agg_%j.out
-#SBATCH --error=/lustre/orion/gen150/proj-shared/alz/aggregation-only/logs/pcmci_agg_%j.err
+#SBATCH --output=./alz/aggregation-only/logs/pcmci_agg_%j.out
+#SBATCH --error=./alz/aggregation-only/logs/pcmci_agg_%j.err
 
-PARQUET=/lustre/orion/gen150/proj-shared/alz/node-wise/pcmciplus-full-dataset
-OUTPUT=/lustre/orion/gen150/proj-shared/alz/aggregation-only/pcmciplus-results
-CONDA_ENV=/lustre/orion/gen150/proj-shared/alz/andes_conda_env
-SCRIPT=/lustre/orion/gen150/proj-shared/alz/aggregation-only/pcmci_single_mpi.py
+PARQUET=./alz/node-wise/pcmciplus-full-dataset
+OUTPUT=./alz/aggregation-only/pcmciplus-results
+CONDA_ENV=./alz/andes_conda_env
+SCRIPT=./alz/aggregation-only/pcmci_single_mpi.py
 
 source activate "$CONDA_ENV" 2>/dev/null \
     || conda activate "$CONDA_ENV" 2>/dev/null \

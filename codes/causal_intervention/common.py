@@ -9,9 +9,8 @@ import torch.nn.functional as F
 import torch.distributed as dist
 import psutil
 
-# ============================================================================
-# LABEL MAPPING (92 total: 86 events + 6 special tokens)
-# ============================================================================
+# LABEL MAPPING 
+# *************
 
 LABEL_MAPPING = {
     # 87 real event tokens (indices 0-86)
@@ -51,9 +50,9 @@ LABEL_MAPPING = {
 IDX_TO_LABEL = {v: k for k, v in LABEL_MAPPING.items()}
 
 
-# ============================================================================
+# *************
 # DISTRIBUTED SETUP
-# ============================================================================
+# *************
 
 def log_affinity(rank, local_rank):
     """Log CPU core and GPU assignment for each rank"""
@@ -114,9 +113,9 @@ def cleanup_distributed():
         dist.destroy_process_group()
 
 
-# ============================================================================
+# *************
 # LOSS FUNCTION
-# ============================================================================
+# *************
 
 def compute_masked_loss(predictions, targets, ignore_indices=[87, 88, 89]):
     """
@@ -152,9 +151,8 @@ def compute_masked_loss(predictions, targets, ignore_indices=[87, 88, 89]):
     return loss
 
 
-# ============================================================================
 # EVALUATION METRICS
-# ============================================================================
+# *************
 
 def compute_metrics(predictions, targets, ignore_indices=[87, 88, 89]):
     """
@@ -192,9 +190,8 @@ def compute_metrics(predictions, targets, ignore_indices=[87, 88, 89]):
     }
 
 
-# ============================================================================
 # VOCABULARY BUILDER
-# ============================================================================
+# *********************
 
 def build_vocabularies(df, rank):
     """Build node and component vocabularies from sample data"""

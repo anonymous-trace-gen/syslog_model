@@ -1,7 +1,6 @@
 """
-PCMCI-ready binned event-count matrix – parallelised node-complete Phase 2.
-Fix: synthetic timeline computed in SECONDS (not nanoseconds) to avoid
-     int64 overflow at node ~857 when timeline exceeds year 2262.
+PCMCI-ready binned event-count matrix  parallelised node-complete Phase 2.
+
 """
 
 import argparse
@@ -70,11 +69,8 @@ def log(tag, msg, t0=None):
     return now
 
 
-# ════════════════════════════════════════════════════════════════════════
-# PASS 1 – build manifest
-# All timeline values stored in SECONDS (not nanoseconds).
-# int64 max in seconds = 292 billion years → no overflow possible.
-# ════════════════════════════════════════════════════════════════════════
+
+# Build manifest
 
 def build_manifest(spark, all_files, manifest_path, interval_sec, job_start):
     """
@@ -115,9 +111,6 @@ def build_manifest(spark, all_files, manifest_path, interval_sec, job_start):
                               // interval_ns) + 1
 
         # Synthetic positions in SECONDS
-        # data rows:    cursor_s, cursor_s+5, ..., cursor_s+(n_bins-1)*5
-        # separator:    cursor_s + n_bins*5          (+5s from last data row)
-        # next node:    cursor_s + (n_bins+1)*5      (+5s from separator)
         synthetic_start_s = cursor_s
         separator_s       = cursor_s + n_bins * interval_sec
         cursor_s          = separator_s + interval_sec   # next node starts here
@@ -156,9 +149,7 @@ def build_manifest(spark, all_files, manifest_path, interval_sec, job_start):
     return manifest
 
 
-# ════════════════════════════════════════════════════════════════════════
-# PASS 2 worker
-# ════════════════════════════════════════════════════════════════════════
+# Worker
 
 def process_node(task: dict) -> dict:
     import time, numpy as np, pyarrow as pa, pyarrow.parquet as pq
@@ -217,7 +208,7 @@ def process_node(task: dict) -> dict:
     out_dir         = Path(task["output_dir"])
 
     try:
-        # ── Read raw rows for this node ───────────────────────────────────
+        # Read raw rows for this node
         node_filter = [("node", "=", node_name)]
         chunks_ts, chunks_tok = [], []
         for fp in task["file_paths"]:
@@ -239,22 +230,17 @@ def process_node(task: dict) -> dict:
         ts_arr  = np.concatenate(chunks_ts)
         tok_arr = np.concatenate(chunks_tok)
 
-        # ── Bin raw ns timestamps into [0, n_bins) slots ──────────────────
-        # All arithmetic here is in nanoseconds on raw timestamps – fine,
-        # these are real wall-clock ns values well within int64 range.
         bin_idx = np.clip(
             ((ts_arr // interval_ns) * interval_ns - min_bin_real_ns)
             // interval_ns,
             0, n_bins - 1
         ).astype(np.int64)
 
-        # ── Count events per (bin, token) ─────────────────────────────────
+        # Count events
         counts = np.zeros((n_bins, N_EV), dtype=np.float32)
         valid  = (tok_arr >= 0) & (tok_arr < N_EV)
         np.add.at(counts, (bin_idx[valid], tok_arr[valid]), 1.0)
 
-        # ── Build synthetic timestamps in SECONDS ─────────────────────────
-        # np.int64 max in seconds = 9.2e18 s ≈ 292 billion years → no overflow
         data_ts_s = (np.arange(n_bins, dtype=np.int64) * interval_sec
                      + synth_start_s)
         sep_ts_s  = np.array([sep_s], dtype=np.int64)
@@ -268,7 +254,6 @@ def process_node(task: dict) -> dict:
                                type=pa.string())
         is_sep_col = pa.array([False]*n_bins + [True], type=pa.bool_())
 
-        # Cast int64 seconds directly to pa.timestamp("s") – no ns involved
         arrays = (
             [node_col,
              pa.array(all_ts_s, type=pa.int64()).cast(TS_TYPE),
@@ -312,10 +297,6 @@ def process_node(task: dict) -> dict:
                 "rows": 0, "elapsed": time.time()-t0}
 
 
-# ════════════════════════════════════════════════════════════════════════
-# Main
-# ════════════════════════════════════════════════════════════════════════
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--phase1_parquet", required=True)
@@ -352,7 +333,7 @@ def main():
     parallelism = args.parallelism if args.parallelism > 0 else total_cores * 2
     log("INIT", f"cores={total_cores}  parallelism={parallelism}", JOB_START)
 
-    # ── Pass 1 ─────────────────────────────────────────────────────────────
+    # Pass 1 
     if args.skip_pass1 and manifest_path.exists():
         log("PASS1", f"Loading manifest from {manifest_path}", JOB_START)
         with open(manifest_path) as f:
@@ -368,7 +349,7 @@ def main():
             f"(int64 max seconds ≈ year 292,000,000,000 – no overflow)",
             JOB_START)
     else:
-        # Rebuild manifest – delete old one if it used ns (has old key names)
+        # Rebuild manifest
         if manifest_path.exists():
             with open(manifest_path) as f:
                 old = json.load(f)
@@ -381,7 +362,7 @@ def main():
         manifest = build_manifest(spark, all_files, manifest_path,
                                   args.interval_sec, JOB_START)
 
-    # ── Pass 2 ─────────────────────────────────────────────────────────────
+    # Pass 2
     done_nodes = set()
     if ledger_path.exists():
         with open(ledger_path) as f:
@@ -416,7 +397,7 @@ def main():
 
     results = sc.parallelize(tasks, parallelism).map(process_node).collect()
 
-    # ── Verify + save ledger ──────────────────────────────────────────────
+    # save ledger
     newly_done, errors = [], []
     rank_map = {n: info["rank"] for n, info in manifest.items()}
     results.sort(key=lambda r: rank_map.get(r["node"], 999999))

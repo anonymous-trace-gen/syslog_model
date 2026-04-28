@@ -1,40 +1,35 @@
 #!/bin/bash
-#SBATCH -A stf218
-#SBATCH -J causal_nw_analysis_sc2026
+#SBATCH -A 
+#SBATCH -J causal_nw_analysis
 #SBATCH -o logs/causal_nw_%j.out
 #SBATCH -e logs/causal_nw_%j.err
-#SBATCH -N 5645
+#SBATCH -N 16
 #SBATCH --ntasks-per-node=8
 #SBATCH --gpus-per-node=8
 #SBATCH -t 12:00:00
 
-# =============================================================================
 #  Multi-node Parallelized Causal Analysis 
-# =============================================================================
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
-# MODEL_PATH="/lustre/orion/scratch/25amk/stf218/logs_llm/backup_vllm_inference/git/syslog_rca/causal/code/gnn/outputs_sequential_lm_184n_node_v3_balanced/best_model.pt"
-MODEL_PATH="/lustre/orion/scratch/25amk/stf218/logs_llm/backup_vllm_inference/git/syslog_rca/causal/code/gnn/outputs_sequential_lm_184n_node_v4_cap10_fixedmask/best_model.pt"
 
-CACHE_DIR="/lustre/orion/scratch/25amk/stf218/gnn_project/cached_data_global_sorted_v2"
-OUTPUT_DIR="/lustre/orion/scratch/25amk/stf218/logs_llm/backup_vllm_inference/git/syslog_rca/causal/code/gnn/causal_analysis_results_nodewise_balanced_cap10_fixedmask"
-CODE_DIR="/lustre/orion/stf218/scratch/25amk/logs_llm/backup_vllm_inference/git/syslog_rca/causal/code/gnn/causal_intervention"
+MODEL_PATH="./logs_llm/backup_vllm_inference/git/syslog_rca/causal/code/gnn/outputs_sequential_lm_184n_node_v4_cap10_fixedmask/best_model.pt"
 
-# ── Analysis hyperparameters ──────────────────────────────────────────────────
-# top_k_events is omitted → all 89 real events are analysed
-N_BOOTSTRAP=500          # Bootstrap iterations (500 = paper quality CI)
-SIG_THRESHOLD=0.02       # Minimum ATE to accept a causal edge
-MIN_OCCURRENCES=10       # Skip pair if cause appears < N times in subsampled set
-MAX_CASCADE_DEPTH=5      # Maximum cascade depth for BFS discovery
-CHECKPOINT_EVERY=1       # Checkpoint after every completed row (safe for 2-hr jobs)
-BATCH_SIZE=64            # Per-GPU forward-pass batch size
-SEQ_LEN=2048
-STRIDE=1024
-VAL_MAX_SEQ=10000        # Subsample: 10k sequences (seed=42, same on all ranks)
-# MAX_PER_EVENT=500        # Cap per event type per window — must match training
-MAX_PER_EVENT=10        # Cap per event type per window — must match training
+CACHE_DIR="./gnn_project/cached_data_global_sorted_v2"
+OUTPUT_DIR="./logs_llm/backup_vllm_inference/git/syslog_rca/causal/code/gnn/causal_analysis_results_nodewise_balanced_cap10_fixedmask"
+CODE_DIR="./logs_llm/backup_vllm_inference/git/syslog_rca/causal/code/gnn/causal_intervention"
 
-# ── Setup ─────────────────────────────────────────────────────────────────────
+# Analysis hyperparameters
+N_BOOTSTRAP=500          
+SIG_THRESHOLD=0.02       
+MIN_OCCURRENCES=10       
+MAX_CASCADE_DEPTH=5     
+CHECKPOINT_EVERY=1      
+BATCH_SIZE=64           
+SEQ_LEN=204
+STRIDE=102
+VAL_MAX_SEQ=10000        
+MAX_PER_EVENT=10        
+
+# Setup 
 mkdir -p "$OUTPUT_DIR"
 mkdir -p logs
 
@@ -53,21 +48,8 @@ export NCCL_NET_GDR_LEVEL=3
 export NCCL_SOCKET_IFNAME=hsn
 export FI_CXI_ATS=0
 
-# ── Pre-flight checks ─────────────────────────────────────────────────────────
-echo "========================================================"
 echo "  CAUSAL ANALYSIS (SC2026)  —  Multi-node"
-echo "========================================================"
-echo "Job ID     : $SLURM_JOB_ID"
-echo "Nodes      : $SLURM_NNODES"
-echo "Total GPUs : $((SLURM_NNODES * 8))  ($SLURM_NNODES × 8)"
-echo "Total ranks: $((SLURM_NNODES * 8))"
-echo "Events     : 87 real  (special tokens excluded)"
-echo "Pairs      : 7569  (87×87)"
-echo "Rows/rank  : ~$((87 / (SLURM_NNODES * 8) + 1))"
-echo "Bootstrap  : $N_BOOTSTRAP  |  Threshold: $SIG_THRESHOLD"
-echo "Val seqs   : $VAL_MAX_SEQ  (seed=42)"
-echo "Output     : $OUTPUT_DIR"
-echo "========================================================"
+
 
 if [ ! -f "$MODEL_PATH" ]; then
     echo "ERROR: Model checkpoint not found: $MODEL_PATH"
@@ -81,7 +63,7 @@ for split in train val; do
         exit 1
     fi
 done
-echo "✓ Data caches found"
+echo " Data caches found"
 
 # Check if merge already completed (rank0_done.flag exists)
 if [ -f "$OUTPUT_DIR/rank0_done.flag" ]; then
@@ -124,11 +106,7 @@ srun \
 EXIT_CODE=$?
 
 echo ""
-echo "========================================================"
 if [ $EXIT_CODE -eq 0 ]; then
-    echo "✓✓✓ CAUSAL ANALYSIS COMPLETE ✓✓✓"
-    echo ""
-    echo "Key outputs:"
     ls -lh "$OUTPUT_DIR"/causal_edges.csv \
            "$OUTPUT_DIR"/transformer_edges_for_triangulation.csv \
            "$OUTPUT_DIR"/cascades.csv \
@@ -157,7 +135,7 @@ print(f'  {sys.argv[0].split(\"/\")[-1]}: {d[\"completed_local_rows\"]}/{d[\"tot
 " "$pkl" 2>/dev/null
     done
 fi
-echo "========================================================"
+echo "==========="
 
 rm -rf "${MIOPEN_USER_DB_PATH}"
 

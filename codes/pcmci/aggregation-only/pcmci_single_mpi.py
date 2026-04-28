@@ -1,6 +1,5 @@
 """
-PCMCIplus causal discovery – single MPI job, one rank per node.
-Fix: separator rows use mask=True + data=0.0 (not NaN).
+PCMCIplus causal discovery.
 Sampling: contiguous-window sampling with rare-event guarantee.
           Windows preserve 5-second temporal spacing within each window.
           Separator rows inserted between windows to tell Tigramite
@@ -13,11 +12,6 @@ Parallelism: one MPI rank per node; rank 0 = coordinator (work queue),
              rank idles while others are still busy.
 Launcher: mpirun (conda-forge OpenMPI does not integrate with srun).
 
-Aggregation fixes (v2):
-  Fix 1 – min_t_data   : groups with too few rows are skipped entirely.
-  Fix 2 – min_group_votes: an edge must appear in ≥ N independent groups.
-  Fix 3 – vote_weighted : larger groups get more weight (sqrt(T_data)).
-  Fix 4 – Fisher method : unweighted alternative via chi-squared combination.
 """
 
 import argparse
@@ -28,13 +22,12 @@ import sys
 import datetime
 import threading
 from pathlib import Path
+import scipy.stats as stats
+from mpi4py import MPI
 
 import numpy as np
 import pyarrow.parquet as pq
 
-# ════════════════════════════════════════════════════════════════════════
-# Variable catalogue
-# ════════════════════════════════════════════════════════════════════════
 
 VARIABLE_GROUPS = {
     "GPU": [
@@ -96,13 +89,10 @@ GROUP_COL_INDICES: dict[str, np.ndarray] = {
 }
 
 # MPI tags
-_TAG_WORK   = 1   # coordinator → worker: {"group_idx": int} or None (poison)
-_TAG_RESULT = 2   # worker → coordinator: {"group_id": str, "status": str, ...}
+_TAG_WORK   = 1   
+_TAG_RESULT = 2   
 
 
-# ════════════════════════════════════════════════════════════════════════
-# Logging
-# ════════════════════════════════════════════════════════════════════════
 
 def now_str() -> str:
     return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -121,10 +111,6 @@ def eta_str(done: int, total: int, elapsed_s: float) -> str:
     return (f"ETA: {eta_dt.strftime('%Y-%m-%d %H:%M:%S')}  "
             f"(~{eta_s / 3600:.1f}h remaining)")
 
-
-# ════════════════════════════════════════════════════════════════════════
-# Heartbeat thread
-# ════════════════════════════════════════════════════════════════════════
 
 class Heartbeat:
     def __init__(self, label: str, rank: int, interval: int = 30,
@@ -165,10 +151,6 @@ class Heartbeat:
         return 0.0
 
 
-# ════════════════════════════════════════════════════════════════════════
-# Tigramite stdout wrapper
-# ════════════════════════════════════════════════════════════════════════
-
 class TimestampedStdout:
     def __init__(self, original, rank: int = 0):
         self._orig = original
@@ -193,10 +175,6 @@ class TimestampedStdout:
 
     def fileno(self): return self._orig.fileno()
 
-
-# ════════════════════════════════════════════════════════════════════════
-# Sampling — contiguous-window sampling with rare-event guarantee
-# ════════════════════════════════════════════════════════════════════════
 
 def contiguous_window_sample(
         block: np.ndarray,
@@ -314,9 +292,6 @@ def contiguous_window_sample(
     return new_block, new_is_sep
 
 
-# ════════════════════════════════════════════════════════════════════════
-# Per-group variable statistics
-# ════════════════════════════════════════════════════════════════════════
 
 def log_group_variable_stats(block, is_sep, node_name, job_start, rank=0):
     data_rows = ~is_sep
@@ -329,10 +304,6 @@ def log_group_variable_stats(block, is_sep, node_name, job_start, rank=0):
         f"  {node_name:<20s}  group_means: " + "  ".join(parts),
         job_start, rank)
 
-
-# ════════════════════════════════════════════════════════════════════════
-# Parquet reader
-# ════════════════════════════════════════════════════════════════════════
 
 def read_node_parquet(path: str, job_start: float, rank: int = 0):
     t0  = time.time()
@@ -358,9 +329,6 @@ def read_node_parquet(path: str, job_start: float, rank: int = 0):
     return block, is_sep, node_name
 
 
-# ════════════════════════════════════════════════════════════════════════
-# Group builder
-# ════════════════════════════════════════════════════════════════════════
 
 def build_groups(node_dirs: list, group_size: int,
                  cross_group_fraction: float) -> list[dict]:
@@ -399,10 +367,6 @@ def build_groups(node_dirs: list, group_size: int,
             })
     return groups
 
-
-# ════════════════════════════════════════════════════════════════════════
-# Core worker  —  runs ONE group
-# ════════════════════════════════════════════════════════════════════════
 
 def run_pcmciplus_group(
         group: dict,
@@ -607,10 +571,6 @@ def run_pcmciplus_group(
             "n_sig_links": len(sig_links), "elapsed": elapsed}
 
 
-# ════════════════════════════════════════════════════════════════════════
-# MPI coordinator  (rank 0)
-# ═══════════════════════════════════════════════════════════════��════════
-
 def run_coordinator(comm, groups: list, output_dir: Path,
                     job_start: float):
     from mpi4py import MPI
@@ -673,10 +633,6 @@ def run_coordinator(comm, groups: list, output_dir: Path,
         job_start, rank=0)
 
 
-# ════════════════════════════════════════════════════════════════════════
-# MPI worker  (ranks 1 .. N-1)
-# ════════════════════════════════════════════════════════════════════════
-
 def run_worker(comm, groups: list, args, output_dir: Path,
                job_start: float, rank: int):
     done_local = 0
@@ -710,14 +666,10 @@ def run_worker(comm, groups: list, args, output_dir: Path,
     log("WORKER", f"rank={rank}  done_local={done_local}", job_start, rank)
 
 
-# ════════════════════════════════════════════════════════════════════════
-# Aggregation  — v2: 4-check pipeline per edge
-#
 #   Check 1  min_t_data       skip entire group if too few rows
 #   Check 2  min_group_votes  edge must be seen in >= N groups
 #   Check 3  vote_weighted    combine p-values weighted by sqrt(T_data)
 #   Check 4  pc_alpha         combined p must still be < alpha
-# ════════════════════════════════════════════════════════════════════════
 
 def aggregate_results(
         group_files: list,
@@ -725,11 +677,11 @@ def aggregate_results(
         pc_alpha: float,
         job_start: float,
         rank: int = 0,
-        min_t_data: int = 200,        # Fix 1: ignore groups with too few rows
-        min_group_votes: int = 2,     # Fix 2: edge must appear in >= N groups
-        vote_weighted: bool = True,   # Fix 3/4: True=weighted geom-mean, False=Fisher
+        min_t_data: int = 200,       
+        min_group_votes: int = 2,    
+        vote_weighted: bool = True,  
 ):
-    import scipy.stats as stats
+    
 
     log("AGGREGATE",
         f"Reading {len(group_files)} group result files …  "
@@ -744,7 +696,6 @@ def aggregate_results(
     skipped_small        = 0
     total_cpvg           = {g: 0 for g in VARIABLE_GROUPS}
 
-    # ── Pass 1: load every group JSON ────────────────────────────────────
     for path in sorted(group_files):
         with open(path) as fh:
             gd = json.load(fh)
@@ -756,14 +707,13 @@ def aggregate_results(
             if g in total_cpvg:
                 total_cpvg[g] += v
 
-        # ── CHECK 1: minimum sample size ─────────────────────────────────
         if T_data < min_t_data:
             skipped_small += 1
             log("AGGREGATE",
                 f"  [CHECK1-FAIL] SKIP {gd.get('group_id')}  "
                 f"T_data={T_data} < min_t_data={min_t_data}",
                 job_start, rank)
-            continue   # ← entire group dropped; none of its edges considered
+            continue   
 
         for lk in gd.get("links", []):
             key = (lk["cause"], lk["effect"], lk["tau"])
@@ -790,20 +740,17 @@ def aggregate_results(
         f"candidate_edges={len(link_evidence):,}",
         job_start, rank)
 
-    # ── Pass 2: vote filter + p-value combination ─────────────────────────
     sorted_links = []
     n_fail_votes = 0
     n_fail_alpha = 0
 
     for (cause, effect, tau), evidence in link_evidence.items():
 
-        # ── CHECK 2: vote filter ─────────────────────────────────────────
         n_votes = len(evidence)
         if n_votes < min_group_votes:
             n_fail_votes += 1
             continue   # ← edge seen in too few groups → discard
 
-        # ── CHECK 3 / 4: combine p-values ────────────────────────────────
         if vote_weighted:
             # Fix 3 – weighted geometric mean  (larger groups dominate)
             weights  = np.array([np.sqrt(e["T_data"]) for e in evidence],
@@ -821,10 +768,9 @@ def aggregate_results(
             combined_p = float(stats.chi2.sf(chi2_stat, df=2 * n_votes))
             best_idx   = int(np.argmin([e["p_val"] for e in evidence]))
 
-        # ── CHECK 4: combined p must still pass alpha ────────────────────
         if combined_p > pc_alpha:
             n_fail_alpha += 1
-            continue   # ← not significant after combining → discard
+            continue   # 
 
         best = evidence[best_idx]
         sorted_links.append({
@@ -832,10 +778,10 @@ def aggregate_results(
             "effect":     effect,
             "tau":        tau,
             "val":        best["val"],
-            "p_val":      combined_p,       # combined p (not raw minimum)
-            "p_val_best": best["p_val"],    # best raw p for reference
+            "p_val":      combined_p,      
+            "p_val_best": best["p_val"],   
             "edge":       best["edge"],
-            "n_votes":    n_votes,          # how many groups agreed
+            "n_votes":    n_votes,         
             "group_id":   best["group_id"],
             "nodes":      best["nodes"],
         })
@@ -850,7 +796,7 @@ def aggregate_results(
         f"surviving_links={len(sorted_links):,}",
         job_start, rank)
 
-    # ── Write causal_graph.json ───────────────────────────────────────────
+    # Write causal_graph
     graph_path = output_dir / "causal_graph.json"
     with open(graph_path, "w") as fh:
         json.dump({
@@ -867,7 +813,7 @@ def aggregate_results(
         }, fh, indent=2)
     log("AGGREGATE", f"Causal graph → {graph_path}", job_start, rank)
 
-    # ── Write causal_summary.txt ──────────────────────────────────────────
+    # Causal_summary
     summary_path = output_dir / "causal_summary.txt"
     with open(summary_path, "w") as fh:
         fh.write(f"PCMCIplus causal graph – {len(sorted_links)} links\n")
@@ -899,9 +845,6 @@ def aggregate_results(
     return sorted_links
 
 
-# ════════════════════════════════════════════════════════════════════════
-# Entry point
-# ════════════════════════════════════════════════════════════════════════
 
 def main():
     ap = argparse.ArgumentParser()
@@ -920,7 +863,7 @@ def main():
     ap.add_argument("--heartbeat_interval",   type=int,   default=30)
     ap.add_argument("--aggregate_only",       action="store_true")
     ap.add_argument("--n_tasks",              type=int,   default=4)
-    # ── new aggregation-quality arguments (Fix 1 / Fix 2 / Fix 3+4) ──────
+    # aggregation-quality arguments
     ap.add_argument("--min_t_data",      type=int,  default=200,
                     help="Fix 1: skip groups with fewer than this many "
                          "effective (non-separator) rows (default: 200)")
@@ -940,7 +883,6 @@ def main():
     output_dir  = Path(args.output_dir)
 
     try:
-        from mpi4py import MPI
         comm          = MPI.COMM_WORLD
         rank          = comm.Get_rank()
         size          = comm.Get_size()
@@ -982,7 +924,7 @@ def main():
         log("INIT", f"Node dirs:     {len(node_dirs):,}", JOB_START, rank)
         log("INIT", f"Total groups:  {total_groups}", JOB_START, rank)
 
-    # ── Aggregate-only mode ───────────────────────────────────────────────
+    # Aggregate-only mode
     if args.aggregate_only:
         if rank == 0:
             group_jsons = sorted(output_dir.glob("group_*.json"))
@@ -1001,7 +943,7 @@ def main():
                 JOB_START, rank)
         return
 
-    # ── MPI parallel mode ─────────────────────────────────────────────────
+    # MPI parallel mode
     if mpi_available:
         if rank == 0:
             run_coordinator(comm, groups, output_dir, JOB_START)
@@ -1020,7 +962,7 @@ def main():
         else:
             run_worker(comm, groups, args, output_dir, JOB_START, rank)
 
-    # ── Sequential fallback ───────────────────────────────────────────────
+    # Sequential fallback
     else:
         for idx, group in enumerate(groups):
             run_pcmciplus_group(

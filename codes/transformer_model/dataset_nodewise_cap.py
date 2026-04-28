@@ -1,11 +1,6 @@
 """
 Dataset for node-wise sorted HPC event sequences with time deltas and per-window event capping.
 
-Key difference from dataset_nodewise.py:
-    Within each 2048-token window, each event type is capped at MAX_PER_EVENT occurrences.
-    Excess occurrences are replaced with <UNK> (index 88).
-    This prevents dominant events (NET_CXI_RAW_DATA at 70.78%, FS_DISK_FULL at 11.07%)
-    from drowning out rare but operationally significant events.
 
 Expected impact (seq_len=2048, cap=50):
     NET_CXI_RAW_DATA : ~1449 → 50 per window  (-97%)
@@ -14,7 +9,6 @@ Expected impact (seq_len=2048, cap=50):
     NET_CXI_TIMEOUT  : ~60   → 50 per window  (-17%)
     Rare events      : unchanged
 
-Cap value is configurable via MAX_PER_EVENT argument (default=50).
 """
 
 import torch
@@ -36,10 +30,6 @@ DEFAULT_MAX_PER_EVENT = 500
 class GloballySortedSequentialDataset(Dataset):
     """
     Memory-mapped dataset for node-wise sorted sequences with per-window event capping.
-
-    Within each seq_len window, each real event type (index 0-86) is allowed to appear
-    at most MAX_PER_EVENT times. Excess occurrences are replaced with <UNK> (index 88).
-    Special tokens (PAD=87, UNK=88, MASK=89) are never capped.
 
     Args:
         cache_dir       : Path to cached numpy data directory
@@ -110,22 +100,16 @@ class GloballySortedSequentialDataset(Dataset):
         tokens     = self.tokens[start:end].copy()
         timestamps = self.timestamps[start:end]
 
-        # ── Apply per-window event cap ─────────────────────────────────────
         tokens = self._apply_event_cap(tokens)
-        # ──────────────────────────────────────────────────────────────────
 
-        # Compute time deltas in SECONDS
         timestamps_ns   = timestamps.astype('datetime64[ns]').astype(np.int64)
         time_deltas_ns  = np.diff(timestamps_ns)
         time_deltas_sec = time_deltas_ns / 1e9
 
-        # Clip time deltas to [0, 86400] seconds (node boundary fix)
         time_deltas_sec = np.clip(time_deltas_sec, 0.0, 86400.0)
 
-        # Pad first delta with 0
         time_deltas_sec = np.concatenate([[0.0], time_deltas_sec])
 
-        # Handle edge case (sequence shorter than expected)
         if len(tokens) < self.seq_len + 1:
             pad_len = self.seq_len + 1 - len(tokens)
             tokens          = np.concatenate([tokens,
@@ -134,7 +118,6 @@ class GloballySortedSequentialDataset(Dataset):
             time_deltas_sec = np.concatenate([time_deltas_sec,
                                               np.zeros(pad_len)])
 
-        # Create input/target pairs (shifted by 1)
         x      = torch.from_numpy(tokens[:-1].copy()).long()
         y      = torch.from_numpy(tokens[1:].copy()).long()
         deltas = torch.from_numpy(time_deltas_sec[:-1].copy()).float()
@@ -159,16 +142,13 @@ def collate_fn(batch):
     }
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Quick test
-# ─────────────────────────────────────────────────────────────────────────────
 
 if __name__ == '__main__':
     import sys
     from collections import Counter
 
     cache_dir = sys.argv[1] if len(sys.argv) > 1 else \
-        '/lustre/orion/scratch/25amk/stf218/gnn_project/cached_data_global_sorted_v2'
+        './gnn_project/cached_data_global_sorted_v2'
 
     print("=" * 60)
     print("Testing dataset_nodewise_cap.py")

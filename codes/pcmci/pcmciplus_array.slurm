@@ -1,19 +1,19 @@
 #!/bin/bash
 #SBATCH --job-name=pcmci_mpi
-#SBATCH --account=gen150
+#SBATCH --account=
 #SBATCH --partition=batch
-#SBATCH --nodes=128                 # 1 coordinator + 127 workers
-#SBATCH --ntasks-per-node=1         # 1 MPI rank per node
-#SBATCH --cpus-per-task=32          # 32 threads per rank for BLAS/OMP
-#SBATCH --mem=220G                  # per-node memory
-#SBATCH --time=6:00:00             # 127 workers → ~8-9× faster than 32 nodes
-#SBATCH --output=/lustre/orion/gen150/proj-shared/alz/more-nodes-128/logs/pcmci_%j.out
-#SBATCH --error=/lustre/orion/gen150/proj-shared/alz/more-nodes-128/logs/pcmci_%j.err
+#SBATCH --nodes=32           
+#SBATCH --ntasks-per-node=1   
+#SBATCH --cpus-per-task=32    
+#SBATCH --mem=220G            
+#SBATCH --time=6:00:00        
+#SBATCH --output=./alz/mnodes/logs/pcmci_%j.out
+#SBATCH --error=./alz/mnodes/logs/pcmci_%j.err
 
-PARQUET=/lustre/orion/gen150/proj-shared/alz/node-wise/pcmciplus-full-dataset
-OUTPUT=/lustre/orion/gen150/proj-shared/alz/more-nodes-128/pcmciplus-results
-CONDA_ENV=/lustre/orion/gen150/proj-shared/alz/andes_conda_env
-SCRIPT=/lustre/orion/gen150/proj-shared/alz/more-nodes-128/pcmciplus_slurm.py
+PARQUET=./alz/node-wise/pcmciplus-full-dataset
+OUTPUT=./alz/mnodes/pcmciplus-results
+CONDA_ENV=./alz/andes_conda_env
+SCRIPT=./alz/mnodes/pcmciplus_slurm.py
 
 echo "================================================"
 echo "SLURM_JOB_ID   : $SLURM_JOB_ID"
@@ -28,12 +28,9 @@ source activate "$CONDA_ENV" 2>/dev/null \
     || source "$CONDA_ENV/bin/activate"
 
 mkdir -p "$OUTPUT" \
-    /lustre/orion/gen150/proj-shared/alz/more-nodes-128/logs
+    ./alz/mnodes/logs
 
-# mpirun reads $SLURM_JOB_NODELIST automatically and distributes
-# one rank per node.  --bind-to none lets each rank use all 32 CPUs.
-# Do NOT use srun here — conda-forge OpenMPI does not integrate with
-# SLURM's PMI and will silently fall back to singleton (size=1).
+
 mpirun -np "$SLURM_NTASKS" \
        --map-by node \
        --bind-to none \

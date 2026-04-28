@@ -1,7 +1,5 @@
 """
-run_causal_analysis.py
-======================
-Multi-node parallelized intervention-based causal analysis (SC2026).
+Multi-node parallelized intervention-based causal analysis.
 
 
 Checkpointing:
@@ -10,13 +8,6 @@ Checkpointing:
     Other ranks signal done immediately after computation.
     On resubmit: each rank resumes from its own partial checkpoint.
 
-Merge (rank 0 only, after all ranks done):
-    Combines partial matrices → full 89×89 ATE matrix
-    Runs extract_edges, discover_cascades, saves all outputs
-
---merge_only flag:
-    Skip computation, only run merge + downstream steps.
-    Useful if all partial checkpoints exist but rank 0 was killed before merge.
 """
 
 import argparse
@@ -33,9 +24,8 @@ import torch
 from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 
-# ── Project imports ────────────────────────────────────────────────────────
 _here = Path(__file__).resolve().parent
-sys.path.insert(0, str(_here.parent / 'train_lm'))   # → dataset.py, model.py
+sys.path.insert(0, str(_here.parent / 'train_lm'))   #
 
 # from dataset_nodewise import GloballySortedSequentialDataset, collate_fn
 from dataset_nodewise_cap import GloballySortedSequentialDataset, collate_fn
@@ -60,9 +50,9 @@ N_REAL_EVENTS = 87
 SPECIAL_TOKEN_NAMES = {"<PAD>", "<UNK>", "<MASK>"}
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+
 # Rank / environment helpers
-# ─────────────────────────────────────────────────────────────────────────────
+# *************
 
 def get_rank_and_world():
     """Read rank/world from SLURM env vars. Falls back to 0/1 for interactive."""
@@ -87,9 +77,8 @@ def setup_logging(output_dir: Path, rank: int):
     )
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # Vocab / model helpers
-# ─────────────────────────────────────────────────────────────────────────────
+# *********************
 
 def build_fallback_vocab():
     """
@@ -131,9 +120,9 @@ def load_model(checkpoint_path: str, args, device: torch.device):
     return model
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Per-rank ATE computation with checkpointing
-# ─────────────────────────────────────────────────────────────────────────────
+
+# Per-rank ATE computation
+# *********************
 
 def partial_ckpt_path(output_dir: Path, rank: int) -> Path:
     return output_dir / f'ate_partial_rank{rank}.pkl'
@@ -188,7 +177,7 @@ def compute_rank_rows(analyzer: InterventionCausalAnalyzer,
     tgap_partial  = np.zeros((n_my, n_total), dtype=np.float32)
     start_local_i = 0
 
-    # ── Resume ────────────────────────────────────────────────────────
+    # Resume from checkpoint
     if ckpt_path.exists():
         try:
             with open(ckpt_path, 'rb') as f:
@@ -212,7 +201,7 @@ def compute_rank_rows(analyzer: InterventionCausalAnalyzer,
         logging.info("All rows already complete — nothing to compute")
         return ate_partial, ci_lo_partial, ci_hi_partial, tgap_partial
 
-    # ── Main computation loop ─────────────────────────────────────────
+    # Main loop
     for local_i, global_row_i in tqdm(
         enumerate(my_rows),
         total=n_my, initial=start_local_i,
@@ -249,9 +238,8 @@ def compute_rank_rows(analyzer: InterventionCausalAnalyzer,
     return ate_partial, ci_lo_partial, ci_hi_partial, tgap_partial
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Merge (rank 0 only)
-# ─────────────────────────────────────────────────────────────────────────────
+# Merge for rank 0 
+# *********************
 
 def merge_partial_matrices(output_dir: Path, world_size: int, n_events: int):
     """Merge per-rank partial ATE matrices into one full n_events × n_events matrix."""
@@ -307,9 +295,7 @@ def _wait_for_all_ranks(output_dir: Path, world_size: int,
     return False
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # Main
-# ─────────────────────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(
@@ -390,7 +376,7 @@ def main():
                      f"Max seqs: {args.max_analysis_sequences:,}")
         logging.info("=" * 72)
 
-    # ── Vocabulary ────────────────────────────────────────────────────
+    # Vocabulary 
     global LABEL_MAPPING, IDX_TO_LABEL
     if LABEL_MAPPING is None:
         LABEL_MAPPING, IDX_TO_LABEL = build_fallback_vocab()
@@ -399,10 +385,10 @@ def main():
                      f"({sum(1 for k in LABEL_MAPPING if k not in SPECIAL_TOKEN_NAMES)} real, "
                      f"3 special)  source: {_vocab_source}")
 
-    # ── Load model (each rank loads independently onto its own GPU) ───
+    # Load model 
     model = load_model(args.model_path, args, device)
 
-    # ── Dataset — identical subsample on every rank (fixed seed) ─────
+    # Dataset 
     dataset = GloballySortedSequentialDataset(
         cache_dir=args.cache_dir,
         split=args.split,
@@ -425,7 +411,7 @@ def main():
         f"Dataset: {len(dataset):,} sequences, {len(dataloader):,} batches"
     )
 
-    # ── Analyzer ──────────────────────────────────────────────────────
+    # Analyzer
     analyzer = InterventionCausalAnalyzer(
         model=model,
         label_mapping=LABEL_MAPPING,
@@ -433,9 +419,6 @@ def main():
         device=str(device),
     )
 
-    # ── Event indices ─────────────────────────────────────────────────
-    # ALL ranks must use the exact same event_indices list.
-    # Rank 0 computes and saves it; all ranks load from file.
     event_indices_path = output_dir / 'event_indices.json'
 
     if rank == 0 and not event_indices_path.exists():
@@ -447,8 +430,7 @@ def main():
             json.dump(event_indices, f)
         logging.info(f"event_indices.json written: {len(event_indices)} events")
 
-    # All ranks wait briefly then read the file
-    # (Lustre propagation latency is < 1s, but poll to be safe)
+
     _wait_for_file(event_indices_path, timeout_sec=60, rank=rank)
     with open(event_indices_path) as f:
         event_indices = json.load(f)
@@ -457,7 +439,6 @@ def main():
     logging.info(f"Analysing {n_events} events  "
              f"({N_REAL_EVENTS} real — 0 special tokens included)")
 
-    # Sanity check: warn if any special token slipped through
     special_in_list = [
         idx for idx in event_indices
         if idx in analyzer._special_indices
@@ -468,12 +449,10 @@ def main():
             f"event_indices — they will be skipped in compute_ate()"
         )
 
-    # ── Assign rows to this rank (round-robin) ────────────────────────
     my_rows = list(range(rank, n_events, world_size))
     logging.info(f"Assigned {len(my_rows)} rows: "
                  f"{my_rows[:6]}{'...' if len(my_rows) > 6 else ''}")
 
-    # ── Computation ───────────────────────────────────────────────────
     if not args.merge_only:
         t0 = time.time()
         compute_rank_rows(
@@ -496,7 +475,6 @@ def main():
                 time.strftime('%Y-%m-%d %H:%M:%S')
             )
 
-    # ── Rank 0: wait → merge → downstream ────────────────────────────
     if rank == 0:
         if not args.merge_only:
             # Wait for all other ranks
@@ -516,7 +494,7 @@ def main():
         analyzer.temporal_matrix = tgap_full > 0
         analyzer._event_indices  = event_indices
 
-        # Save full raw matrices
+        # Save 
         np.save(output_dir / 'ate_matrix_full.npy',  ate_full)
         np.save(output_dir / 'ci_low_full.npy',      ci_lo_full)
         np.save(output_dir / 'ci_high_full.npy',     ci_hi_full)
@@ -581,9 +559,6 @@ def main():
         logging.info("=" * 72)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Utility
-# ─────────────────────────────────────────────────────────────────────────────
 
 def _wait_for_file(path: Path, timeout_sec: int = 60, rank: int = 0):
     deadline = time.time() + timeout_sec

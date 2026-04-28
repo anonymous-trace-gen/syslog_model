@@ -1,17 +1,16 @@
 #!/bin/bash
-#SBATCH -A stf218
+#SBATCH -A 
 #SBATCH -J train_lm_nodewise_cap50
 #SBATCH -o logs/seq_lm_node%j.out
 #SBATCH -e logs/seq_lm_node%j.err
-#SBATCH -N 5645
+#SBATCH -N 32
 #SBATCH -t 12:00:00
-#SBATCH --exclude=frontier09211
 # #SBATCH -q debug
 
 
-CACHE_DIR="/lustre/orion/scratch/25amk/stf218/gnn_project/cached_data_global_sorted_v2"
-OUTPUT_DIR="/lustre/orion/scratch/25amk/stf218/logs_llm/backup_vllm_inference/git/syslog_rca/causal/code/gnn/outputs_sequential_lm_184n_node_v4_cap10_fixedmask"
-CODE_DIR="/lustre/orion/stf218/scratch/25amk/logs_llm/backup_vllm_inference/git/syslog_rca/causal/code/gnn/train_lm"
+CACHE_DIR="./gnn_project/cached_data_global_sorted_v2"
+OUTPUT_DIR="./logs_llm/backup_vllm_inference/git/syslog_rca/causal/code/gnn/outputs_sequential_lm_184n_node_v4_cap10_fixedmask"
+CODE_DIR="./logs_llm/backup_vllm_inference/git/syslog_rca/causal/code/gnn/train_lm"
 
 BATCH_SIZE=16
 EPOCHS=50
@@ -28,9 +27,8 @@ mkdir -p logs
 
 module load rocm/6.4.2
 module load craype-accel-amd-gfx90a
-source /lustre/orion/stf218/scratch/25amk/logs_llm/backup_vllm_inference/venv_rca/bin/activate
+source ./logs_llm/backup_vllm_inference/venv_rca/bin/activate
 
-# export ROCR_VISIBLE_DEVICES=$SLURM_LOCALID
 
 export MIOPEN_USER_DB_PATH=/tmp/${USER}-miopen-cache-${SLURM_JOB_ID}
 export MIOPEN_CUSTOM_CACHE_DIR=${MIOPEN_USER_DB_PATH}
@@ -56,13 +54,9 @@ MASK_5="0x0000fe0000000000"
 MASK_6="0x00fe000000000000"
 MASK_7="0xfe00000000000000"
 
-echo "========================================"
-echo " 184 NODES RUN"
-echo "========================================"
 echo "Job ID: $SLURM_JOB_ID"
 echo "Nodes: $SLURM_NNODES"
 echo "GPUs: $((SLURM_NNODES * 8))"
-echo "========================================"
 
 # Verify caches
 for split in train val; do
@@ -107,18 +101,16 @@ srun -N ${SLURM_NNODES} \
        --warmup_steps $WARMUP_STEPS \
        --sort_type node \
        --max_per_event 10 \
-       --event_weights /lustre/orion/stf218/scratch/25amk/logs_llm/backup_vllm_inference/git/syslog_rca/causal/code/gnn/train_lm/event_weights.npy \
+       --event_weights ./event_weights.npy \
        --auto_resume
     
 EXIT_CODE=$?
 
 echo ""
-echo "========================================"
 if [ $EXIT_CODE -eq 0 ]; then
-    echo "✓✓✓ TEST PASSED! ✓✓✓"
+    echo "TEST "
 else
-    echo "✗ FAILED: $EXIT_CODE"
+    echo "FAILED: $EXIT_CODE"
 fi
-echo "========================================"
 
 rm -rf ${MIOPEN_USER_DB_PATH}

@@ -1,17 +1,13 @@
 """
-PCMCIplus causal discovery – single MPI job, one rank per node.
-Fix: separator rows use mask=True + data=0.0 (not NaN).
+PCMCIplus causal discovery.
+
 Sampling: contiguous-window sampling with rare-event guarantee.
           Windows preserve 5-second temporal spacing within each window.
           Separator rows inserted between windows to tell Tigramite
           they are not consecutive.
-Heartbeat: background thread prints every 30s during PCMCIplus run.
+
 Variable grouping: GPU / HW_MCE / HW_OTHER / NET_CXI / NET_OTHER /
                    FS / SYS / SVC_APP / CTX_SEC
-Parallelism: one MPI rank per node; rank 0 = coordinator (work queue),
-             ranks 1..N-1 = workers.  Dynamic work stealing ensures no
-             rank idles while others are still busy.
-Launcher: mpirun (conda-forge OpenMPI does not integrate with srun).
 """
 
 import argparse
@@ -22,13 +18,12 @@ import sys
 import datetime
 import threading
 from pathlib import Path
+import tigramite.data_processing as pp
+from tigramite.pcmci import PCMCI
+from tigramite.independence_tests.parcorr import ParCorr
 
 import numpy as np
 import pyarrow.parquet as pq
-
-# ════════════════════════════════════════════════════════════════════════
-# Variable catalogue
-# ═════════════════════════���══════════════════════════════════════════════
 
 VARIABLE_GROUPS = {
     "GPU": [
@@ -90,13 +85,9 @@ GROUP_COL_INDICES: dict[str, np.ndarray] = {
 }
 
 # MPI tags
-_TAG_WORK   = 1   # coordinator → worker: {"group_idx": int} or None (poison)
-_TAG_RESULT = 2   # worker → coordinator: {"group_id": str, "status": str, ...}
+_TAG_WORK   = 1  
+_TAG_RESULT = 2  
 
-
-# ════════════════════════════════════════════════════════════════════════
-# Logging
-# ════════════════════════════════════════════════════════════════════════
 
 def now_str() -> str:
     return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -115,10 +106,6 @@ def eta_str(done: int, total: int, elapsed_s: float) -> str:
     return (f"ETA: {eta_dt.strftime('%Y-%m-%d %H:%M:%S')}  "
             f"(~{eta_s / 3600:.1f}h remaining)")
 
-
-# ════════════════════════════════════════════════════════════════════════
-# Heartbeat thread
-# ════════════════════════════════════════════════════════════════════════
 
 class Heartbeat:
     def __init__(self, label: str, rank: int, interval: int = 30,
@@ -159,10 +146,6 @@ class Heartbeat:
         return 0.0
 
 
-# ════════════════════════════════════════════════════════════════════════
-# Tigramite stdout wrapper
-# ════════════════════════════════════════════════════════════════════════
-
 class TimestampedStdout:
     def __init__(self, original, rank: int = 0):
         self._orig = original
@@ -187,10 +170,6 @@ class TimestampedStdout:
 
     def fileno(self): return self._orig.fileno()
 
-
-# ════════════════════════════════════════════════════════════════════════
-# Sampling — contiguous-window sampling with rare-event guarantee
-# ════════════════════════════════════════════════════════════════════════
 
 def contiguous_window_sample(
         block: np.ndarray,
@@ -308,10 +287,6 @@ def contiguous_window_sample(
     return new_block, new_is_sep
 
 
-# ════════════════════════════════════════════════════════════════════════
-# Per-group variable statistics
-# ════════════════════════════════════════════════════════════════════════
-
 def log_group_variable_stats(block, is_sep, node_name, job_start, rank=0):
     data_rows = ~is_sep
     if data_rows.sum() == 0:
@@ -323,10 +298,6 @@ def log_group_variable_stats(block, is_sep, node_name, job_start, rank=0):
         f"  {node_name:<20s}  group_means: " + "  ".join(parts),
         job_start, rank)
 
-
-# ════════════════════════════════════════════════════════════════════════
-# Parquet reader
-# ════════════════════════════════════════════════════════════════════════
 
 def read_node_parquet(path: str, job_start: float, rank: int = 0):
     t0  = time.time()
@@ -351,10 +322,6 @@ def read_node_parquet(path: str, job_start: float, rank: int = 0):
         job_start, rank)
     return block, is_sep, node_name
 
-
-# ════════════════════════════════════════════════════════════════════════
-# Group builder
-# ════════════════════════════════════════════════════════════════════════
 
 def build_groups(node_dirs: list, group_size: int,
                  cross_group_fraction: float) -> list[dict]:
@@ -393,10 +360,6 @@ def build_groups(node_dirs: list, group_size: int,
             })
     return groups
 
-
-# ════════════════════════════════════════════════════════════════════════
-# Core worker  —  runs ONE group
-# ════════════════════════════════════════════════════════════════════════
 
 def run_pcmciplus_group(
         group: dict,
@@ -502,9 +465,6 @@ def run_pcmciplus_group(
         f"mask_frac={mask_full.mean():.4f}",
         job_start, rank)
 
-    import tigramite.data_processing as pp
-    from tigramite.pcmci import PCMCI
-    from tigramite.independence_tests.parcorr import ParCorr
 
     dataframe = pp.DataFrame(data=data_full, mask=mask_full,
                              var_names=EVENT_COLS)
@@ -668,10 +628,6 @@ def run_coordinator(comm, groups: list, output_dir: Path,
         job_start, rank=0)
 
 
-# ════════════════════════════════════════════════════════════════════════
-# MPI worker  (ranks 1 .. N-1)
-# ════════════════════════════════════════════════════════════════════════
-
 def run_worker(comm, groups: list, args, output_dir: Path,
                job_start: float, rank: int):
     done_local = 0
@@ -704,10 +660,6 @@ def run_worker(comm, groups: list, args, output_dir: Path,
 
     log("WORKER", f"rank={rank}  done_local={done_local}", job_start, rank)
 
-
-# ════════════════════════════════════════════════════════════════════════
-# Aggregation
-# ════════════════════════════════════════════════════════════════════════
 
 def aggregate_results(group_files: list, output_dir: Path,
                       pc_alpha: float, job_start: float, rank: int = 0):
@@ -775,10 +727,6 @@ def aggregate_results(group_files: list, output_dir: Path,
             job_start, rank)
     return sorted_links
 
-
-# ════════════════════════════════════════════════════════════════════════
-# Entry point
-# ════════════════════════════════════════════════════════════════════════
 
 def main():
     ap = argparse.ArgumentParser()
@@ -851,7 +799,7 @@ def main():
         log("INIT", f"Node dirs:     {len(node_dirs):,}", JOB_START, rank)
         log("INIT", f"Total groups:  {total_groups}", JOB_START, rank)
 
-    # ── Aggregate-only mode ───────────────────────────────────────────────
+    #  Aggregate
     if args.aggregate_only:
         if rank == 0:
             group_jsons = sorted(output_dir.glob("group_*.json"))
@@ -865,7 +813,7 @@ def main():
                 JOB_START, rank)
         return
 
-    # ── MPI parallel mode ─────────────────────────────────────────────────
+    
     if mpi_available:
         if rank == 0:
             run_coordinator(comm, groups, output_dir, JOB_START)
@@ -879,7 +827,7 @@ def main():
         else:
             run_worker(comm, groups, args, output_dir, JOB_START, rank)
 
-    # ── Sequential fallback ───────────────────────────────────────────────
+    
     else:
         for idx, group in enumerate(groups):
             run_pcmciplus_group(
