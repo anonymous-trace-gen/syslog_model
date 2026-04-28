@@ -2,11 +2,6 @@
 
 Claude Agent SDK-based CLI for assesing and evaluating Frontier supercomputer failures causal links. The agent queries a built-in knowledge base (MCP server) and returns structured responses.
 
-## Install
-
-```bash
-pip install -e .
-```
 
 ## Usage
 
