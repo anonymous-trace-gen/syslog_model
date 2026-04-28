@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -A stf218
+#SBATCH -A 
 #SBATCH -p batch
 #SBATCH -J build_all_caches
 #SBATCH -N 32
@@ -14,28 +14,22 @@
 # Build train, val, and test caches automatically
 # No interactive prompts!
 
-DATA_PATH="/lustre/orion/proj-shared/gen150/gen150_sys/data/data_dir"
-CACHE_DIR="/lustre/orion/scratch/25amk/stf218/gnn_project/cached_data_global_sorted_v2_nosplit"
-CODE_DIR="/lustre/orion/stf218/scratch/25amk/logs_llm/backup_vllm_inference/git/syslog_rca/causal/code/gnn/revised_code"
+DATA_PATH="./data/data_dir"
+CACHE_DIR="./cached_data_global_sorted_v2_nosplit"
+CODE_DIR="./logs_llm/backup_vllm_inference/git/syslog_rca/causal/code/gnn/revised_code"
 
 cd "$CODE_DIR"
-source /lustre/orion/stf218/scratch/25amk/logs_llm/backup_vllm_inference/venv_rca_andes/bin/activate
+source ./logs_llm/backup_vllm_inference/venv_rca_andes/bin/activate
 
 PYTHON_EXEC=$(which python3)
 
 # Spark Setup
-export SPARK_HOME=/lustre/orion/scratch/25amk/stf218/logs_llm/spark-3.5.7-bin-hadoop3
+export SPARK_HOME=./logs_llm/spark-3.5.7-bin-hadoop3
 export PATH=$SPARK_HOME/bin:$PATH
-export SPARK_LOCAL_DIRS=/lustre/orion/scratch/25amk/stf218/andes_spark_scratch/$SLURM_JOB_ID
+export SPARK_LOCAL_DIRS=./logs_llm/andes_spark_scratch/$SLURM_JOB_ID
 mkdir -p $SPARK_LOCAL_DIRS
 
-echo "=========================================="
-echo "BUILD ALL CACHES (TRAIN, VAL, TEST)"
-echo "=========================================="
-echo "Nodes: $SLURM_NNODES"
-echo "Time limit: 8 hours"
-echo "Date: $(date)"
-echo ""
+
 
 # Start Spark Cluster
 NODES=($(scontrol show hostnames $SLURM_JOB_NODELIST))
@@ -55,21 +49,12 @@ done
 wait
 sleep 15
 
-echo ""
-echo "✓ Spark cluster ready!"
-echo "=========================================="
-echo ""
+
 
 # Function to build cache for a split
 build_split() {
     local SPLIT=$1
     
-    echo ""
-    echo "=========================================="
-    echo "Building $SPLIT split..."
-    echo "=========================================="
-    echo "Started: $(date)"
-    echo ""
     
     spark-submit \
         --master $MASTER_URL \
@@ -93,20 +78,15 @@ build_split() {
     
     local EXIT_CODE=$?
     
-    echo ""
-    echo "=========================================="
+    
     if [ $EXIT_CODE -eq 0 ]; then
-        echo "✓ $SPLIT split complete!"
-        echo ""
-        echo "Files created:"
+        echo "$SPLIT split complete!"
+        
         ls -lh "$CACHE_DIR"/${SPLIT}_*.npy 2>/dev/null || echo "  (No files found - check errors)"
-        echo ""
-        echo "Completed: $(date)"
+        
     else
-        echo "✗ $SPLIT split FAILED with exit code $EXIT_CODE"
         return $EXIT_CODE
     fi
-    echo "=========================================="
     
     return $EXIT_CODE
 }
@@ -116,7 +96,7 @@ OVERALL_SUCCESS=0
 
 # Check if train already exists 
 if [ -f "$CACHE_DIR/train_node_ts_sorted_tokens.npy" ]; then
-    echo "✓ TRAIN cache already exists - skipping"
+    echo "TRAIN cache already exists"
     ls -lh "$CACHE_DIR"/train_*.npy
 else
     build_split "train"
@@ -127,12 +107,6 @@ fi
 
 
 # Summary
-echo ""
-echo "=========================================="
-echo "SUMMARY"
-echo "=========================================="
-echo "Completed: $(date)"
-echo ""
 echo "Cache files in $CACHE_DIR:"
 ls -lh "$CACHE_DIR"/*.npy 2>/dev/null | grep -E "(train|val|test)_global_sorted"
 echo ""
@@ -151,7 +125,6 @@ for split in train; do
     fi
 done
 
-echo "=========================================="
 
 # Cleanup
 echo ""
@@ -159,13 +132,5 @@ echo "Stopping Spark cluster..."
 ssh $MASTER_NODE "$SPARK_HOME/sbin/stop-all.sh" 2>/dev/null
 rm -rf $SPARK_LOCAL_DIRS
 
-echo ""
-if [ $OVERALL_SUCCESS -eq 0 ]; then
-    echo "✓✓✓ ALL CACHES BUILT SUCCESSFULLY! ✓✓✓"
-else
-    echo "✗ Some caches failed - check logs above"
-fi
-echo ""
-echo "Done! $(date)"
 
 exit $OVERALL_SUCCESS

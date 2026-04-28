@@ -1,6 +1,5 @@
 """
-Build cache using PySpark - NODE + TIMESTAMP SORTED VERSION.
-Sorts data globally by [node (name), timestamp] and converts to NumPy.
+Sorts data globally by [node (name), timestamp]
 """
 
 from pyspark.sql import SparkSession
@@ -11,6 +10,8 @@ import pandas as pd
 from pathlib import Path
 import argparse
 import pickle
+from tqdm import tqdm
+import sys
 
 
 def main():
@@ -57,10 +58,6 @@ def main():
         "<PAD>": 87, "<UNK>": 88, "<MASK>": 89,
     }
     
-    print("="*80)
-    print("PYSPARK CACHE BUILDER - NODE + TIMESTAMP SORTED VERSION")
-    print("="*80)
-    
     # Initialize Spark
     print("\nInitializing Spark...")
     spark = SparkSession.builder \
@@ -71,7 +68,6 @@ def main():
         .config("spark.default.parallelism", "4096") \
         .getOrCreate()
     
-    print("✓ Spark initialized")
     
     # Get file paths
     base_dir = Path(args.data_path)
@@ -85,7 +81,6 @@ def main():
             all_files.extend([str(f) for f in files])
             print(f"  {bdir}: {len(files)} files")
     
-    print(f"\n✓ Found {len(all_files)} total files")
     
     # Split for train/val/test
     num_files = len(all_files)
@@ -97,31 +92,27 @@ def main():
     else:
         split_files = all_files[int(num_files * 0.9):]
     
-    print(f"✓ {args.split} split: {len(split_files)} files")
     
     # Read all parquet files — include 'name' (node) column
     print("\nReading parquet files in parallel...")
     df = spark.read.parquet(*split_files).select('timestamp', 'name', 'event_token')
-    print("✓ Data loaded")
     
     # Get total count
     print("\nCounting events...")
     total_events = df.count()
-    print(f"✓ Total events: {total_events:,}")
 
     # Log unique node count for visibility
     num_nodes = df.select('name').distinct().count()
-    print(f"✓ Unique nodes: {num_nodes:,}")
     
     # CRITICAL: Global sort by node first, then timestamp within each node
     print("\nGlobal sorting by [name, timestamp] (this may take ~8-12 minutes)...")
     df_sorted = df.orderBy('name', 'timestamp')
-    print("✓ Sorted")
+    print("Sorted")
     
     # Coalesce to fewer partitions (maintains sort!)
     print("\nCoalescing to 100 partitions (maintains sort order)...")
     df_sorted = df_sorted.coalesce(100)
-    print("✓ Coalesced")
+    print("Coalesced")
     
     # Tokenize event_token
     print("\nTokenizing events...")
@@ -172,9 +163,8 @@ def main():
     print(f"Duration: {duration:.1f} hours")
     
     if first_node > last_node:
-        print("\n❌ ERROR: Node ordering looks reversed (alphabetically)!")
+        print("\n ERROR: Node ordering looks reversed (alphabetically)!")
         print("Aborting - something went wrong with Spark sort!")
-        import sys
         sys.exit(1)
     else:
         print("\n✅ Data is correctly sorted (node A→Z, then oldest→newest per node)!")
@@ -227,10 +217,7 @@ def main():
     print("✓ Memory-mapped files created")
     
     # Fill arrays in batches
-    print("\nFilling arrays from Spark output (batched for speed)...")
-    
-    from tqdm import tqdm
-    
+        
     # First pass: collect all unique node names to build a stable int mapping
     print("\nPass 1: collecting unique node names for mapping...")
     unique_nodes = set()
@@ -263,7 +250,6 @@ def main():
         batch_combined = pd.concat(batch_dfs, ignore_index=True)
         del batch_dfs
         
-        # Extract arrays
         timestamps_chunk = pd.to_datetime(batch_combined['timestamp']).values
         tokens_chunk     = batch_combined['token_id'].values.astype(np.int64)
         nodes_chunk      = batch_combined['name'].map(node_to_int).values.astype(np.int32)
@@ -271,7 +257,6 @@ def main():
         
         chunk_len = len(tokens_chunk)
         
-        # Write to memory-mapped files
         tokens_mmap[offset:offset+chunk_len]     = tokens_chunk
         timestamps_mmap[offset:offset+chunk_len] = timestamps_chunk
         nodes_mmap[offset:offset+chunk_len]      = nodes_chunk
@@ -284,7 +269,6 @@ def main():
             timestamps_mmap.flush()
             nodes_mmap.flush()
     
-    # Final flush
     tokens_mmap.flush()
     timestamps_mmap.flush()
     nodes_mmap.flush()
@@ -306,31 +290,19 @@ def main():
             'num_nodes':      len(node_list),
             'sort_order':     'node_then_timestamp',
         }, f)
-    print(f"  ✓ {metadata_file}")
+    print(f"  {metadata_file}")
     
     done_flag.touch()
-    print(f"  ✓ {done_flag}")
+    print(f"  {done_flag}")
     
     # Cleanup
     print("\nCleaning up temporary files...")
     import shutil
     shutil.rmtree(temp_output)
-    print("  ✓ Removed spark_node_ts_sorted_output/")
     
-    print("\n" + "="*80)
-    print("BUILD COMPLETE!")
-    print("="*80)
-    print(f"Split:      {args.split}")
-    print(f"Events:     {offset:,}")
-    print(f"Nodes:      {len(node_list)}")
-    print(f"Time range: {first_ts} to {last_ts}")
-    print(f"Duration:   {duration:.1f} hours ({duration/24:.1f} days)")
-    print(f"\nFiles created:")
     print(f"  {token_file}     ({token_file.stat().st_size / 1024**3:.2f} GB)")
     print(f"  {timestamp_file} ({timestamp_file.stat().st_size / 1024**3:.2f} GB)")
     print(f"  {node_file}      ({node_file.stat().st_size / 1024**3:.2f} GB)")
-    print(f"  {node_map_file}  (node name ↔ int mapping)")
-    print("="*80)
 
 
 if __name__ == "__main__":

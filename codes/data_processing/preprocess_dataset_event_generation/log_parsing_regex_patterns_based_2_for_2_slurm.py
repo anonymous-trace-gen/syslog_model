@@ -1,18 +1,9 @@
 """
-═══════════════════════════════════════════════════════════════════════════════
-FRONTIER SC 2026: MANUAL PYARROW PARSER (MEMORY OPTIMIZED)
-═══════════════════════════════════════════════════════════════════════════════
 LOGIC:
   1. Priority 1: Architecture-Aware MCE Decoding.
-  2. Priority 2: Comprehensive Regex Database.
+  2. Priority 2:  Regex Database.
   3. Output: Preserves exact 'parsed_logs' vs 'residuals' structure.
 
-MEMORY FIX:
-  1. Uses 'pq.ParquetFile().iter_batches()' instead of 'read_table()'.
-     - Reads file in small chunks (Row Groups) rather than all-at-once.
-  2. Uses Python Generators ('yield') instead of returning Lists.
-     - Prevents serializing giant objects, eliminating the Pickle/MemoryError.
-  3. Handles Schema Drift manually in Python (casts all messy numbers to String).
 """
 import sys
 import re
@@ -21,14 +12,13 @@ import glob
 import pyarrow.parquet as pq
 import pandas as pd
 import numpy as np
+import re
+
 
 from pyspark.sql import SparkSession
 from pyspark.sql.types import StructType, StructField, StringType, DoubleType, LongType
 from pyspark.sql.functions import col, when, udf
 
-# ==============================================================================
-# CONFIGURATION 
-# ==============================================================================
 if len(sys.argv) > 1:
     ARGS = int(sys.argv[1])
 else:
@@ -36,21 +26,18 @@ else:
     sys.exit(1)
 
 if ARGS == 1:
-    INPUT_DIR_PATTERN = "/lustre/orion/stf218/proj-shared/25amk/llm_logs/search_after_query_all/logs_data_all/*.parquet"
-    OUTPUT_BASE = "/lustre/orion/scratch/25amk/stf218/logs_llm/backup_vllm_inference/git/syslog_rca/causal/code/log_analysis/frontier_sc2026_parsed_batch1_final_log"
+    INPUT_DIR_PATTERN = "./llm_logs/search_after_query_all/logs_data_all/*.parquet"
+    OUTPUT_BASE = "./logs_llm/backup_vllm_inference/git/syslog_rca/causal/code/log_analysis/frontier_sc2026_parsed_batch1_final_log"
 elif ARGS == 2:
-    INPUT_DIR_PATTERN = "/lustre/orion/stf218/proj-shared/25amk/llm_logs/search_after_query_all/logs_data_all_batch2/*.parquet"
-    OUTPUT_BASE = "/lustre/orion/scratch/25amk/stf218/logs_llm/backup_vllm_inference/git/syslog_rca/causal/code/log_analysis/frontier_sc2026_parsed_batch2_final_log"
+    INPUT_DIR_PATTERN = "./llm_logs/search_after_query_all/logs_data_all_batch2/*.parquet"
+    OUTPUT_BASE = "./logs_llm/backup_vllm_inference/git/syslog_rca/causal/code/log_analysis/frontier_sc2026_parsed_batch2_final_log"
 elif ARGS == 3:
-    INPUT_DIR_PATTERN = "/lustre/orion/stf218/proj-shared/25amk/llm_logs/search_after_query_all/logs_data_all_batch3/*.parquet"
-    OUTPUT_BASE = "/lustre/orion/scratch/25amk/stf218/logs_llm/backup_vllm_inference/git/syslog_rca/causal/code/log_analysis/frontier_sc2026_parsed_batch3_final_log"
+    INPUT_DIR_PATTERN = "./llm_logs/search_after_query_all/logs_data_all_batch3/*.parquet"
+    OUTPUT_BASE = "./logs_llm/backup_vllm_inference/git/syslog_rca/causal/code/log_analysis/frontier_sc2026_parsed_batch3_final_log"
 elif ARGS == 4:
-    INPUT_DIR_PATTERN = "/lustre/orion/stf218/proj-shared/25amk/llm_logs/search_after_query_all/parallel_syslog/logs_data_parallel/*.parquet"
-    OUTPUT_BASE = "/lustre/orion/scratch/25amk/stf218/logs_llm/backup_vllm_inference/git/syslog_rca/causal/code/log_analysis/frontier_sc2026_parsed_batch4_final_log"
+    INPUT_DIR_PATTERN = "./llm_logs/search_after_query_all/parallel_syslog/logs_data_parallel/*.parquet"
+    OUTPUT_BASE = "./logs_llm/backup_vllm_inference/git/syslog_rca/causal/code/log_analysis/frontier_sc2026_parsed_batch4_final_log"
 
-# ==============================================================================
-# 1. ARCHITECTURE-AWARE BANK MAPPER
-# ==============================================================================
 def get_mc_bank_token(line):
     if not line: return None
     match = re.search(r'(?:Bank\s*|MC)(\d+)(?:_STATUS)?', line)
@@ -65,16 +52,8 @@ def get_mc_bank_token(line):
     if 48 <= bank <= 63: return "HW_IF_GPU_LINK"
     return "HW_MCE_UNK"
 
-import re
 
-# ==============================================================================
-# FINAL PATTERN DATABASE (Pattern-Mirrored Edition)
-# DESIGN GOAL: Strict adherence to patterns.txt structures to eliminate False Positives.
-# ==============================================================================
 LOG_PATTERNS = {
-    # ==========================================================================
-    # PRIORITY 1: CRITICAL HARDWARE (Root Causes)
-    # ==========================================================================
     
     # --- SLINGSHOT (Network) ---
     "NET_CXI_HW_ECC":    re.compile(r"(?:cxi_ss1|cxi_core|device hsn\d+|pnp 00:\d+).* (?:C_EC_UNCOR|C_EC_CRIT|C_EC_UNCOR_NS|C_EC_BADCON_S)|Fatal error"),
@@ -112,9 +91,6 @@ LOG_PATTERNS = {
     "HW_BMC_WARN":       re.compile(r"ipmi_si.*BMC does not support|Failed to execute ipmitool|hpilo.*Open could not dequeue|Couldn't read the IPMI|command failed: BMC initialization"),
     "HW_THERMAL_CRIT":   re.compile(r"temperature.*exceeds warning threshold|thermal throttling|THERMAL_FAULT|sensor .* in (fatal|critical|warning) state"),
 
-    # ==========================================================================
-    # PRIORITY 2: OS & KERNEL (Propagation Layer)
-    # ==========================================================================
     
     # --- STORAGE ---
     "FS_CLUSTER_EVICT":  re.compile(r"LustreError:.*(evicted|Evicted|Lost membership|unmounting file system)|\[E\] Lost membership|\[E\] Remount failed|Unable to contact any quorum nodes|Failed unmounting|Lustre: Evicted|Lustre: Unmounted|Connection to .* was lost|DVS: No valid nodes|Close connection to .* Node failed"),
@@ -151,10 +127,7 @@ LOG_PATTERNS = {
     "SYS_PROCESS_LIM":   re.compile(r"over core_pipe_limit"),
     "SYS_COREDUMP":      re.compile(r"systemd-coredump|Skipping core dump|Failed to send coredump|systemd-coredump\.socket: Too many incoming connections"),
     
-    # ==========================================================================
-    # PRIORITY 3: APPLICATIONS & SERVICES (Symptoms)
-    # ==========================================================================
-    
+   
     # --- SYSTEMD SPLIT (Crucial for RCA) ---
     "SVC_SYSTEMD_START": re.compile(r"(?:systemd\[\d+\]|[\w.-]+\.(?:service|mount|scope)): (?:Failed to start|Unit .* entered failed state|.* Dependency failed|Failed with result|Start request repeated(?: too quickly)?)"),
     "SVC_SYSTEMD_TIME":  re.compile(r"(?:systemd\[\d+\]|[\w.-]+\.(?:service|mount|scope)): .* timed out|call to .* failed: DBus method call timed out|Failed to activate service '.*': timed out"),
@@ -186,25 +159,20 @@ LOG_PATTERNS = {
     "INFO_NOISE":        re.compile(r"Skipped \d+|message repeated|Hardware name:|BIOS|kernel module|Initializing the GPFS|automatic interface scanning|closing TCT|Setting log level|CAUTION|Dynamic interrupt throttling|Deprecated parameter|Using mlock ulimits|audit daemon|switch has rebooted|HTTP error 500 on POST|Allocated shared GPFS|Content changed during rsync|Last unloaded:|mlx5_core.*Missing SyncE|igb.*Reset adapter|snd_hda_intel|pnp 00:|bpmcd|can't read from|cannot create socket|indirect call not allowed|device .* set up|run_command_poll_child|chan_read_failed|Already killed|Received disconnect|_open_as_other|MaxStartups|cannot listen to port|connect_to localhost|no more sessions|hrtimer|initial_batch_size|kernel read not supported|unexpected unlock status|max_batch_size|max_fabric_packet_age|max_no_matching|max_resource_busy|max_spt_retries|max_trs_pend_rsp|message too long|min_free_kbytes|error forwarding|remote server|failed to set xattr|pause_wait_time|pct_cfg_timing|peer_tct_free_wait_time|rsync returned|RT throttling|spt_timeout_epoch_sel|statsFS|mems_allowed|tct_timeout_epoch_sel|client does not accept|warn_alloc|warn_unsupported|warning during parsing|nvidia-caps-imex|PEFILE|PKRU|REQTMOUT|Received unknown opcode|Return Package|See systemctl|See \"\"systemctl|total number of facts|Unloaded tainted|VFS: Lookup|Watching pool|Workqueue:|Wrapped exception|Abandoning IO|Killing connection|Unable to contact|Duplicated hardware|Unable to set up|No AMA found|commMsgCheckMessages|Local host not found|Adding nid|Removing nid|Attempted connection|Can't get traces|Can't load configuration|Can't write to|Cannot find unit|Could not open command|Could not send report|conserver.service|pe.service|compatibility logic is deprecated|Device: /dev/sd|Flags: TI-RPC|NO devices found|retry backoff|Lustre: Mounted|See \"systemctl status|Successfully deleted service|DVS: Revision|Disabling lock debugging|Connection lasted|Interface wait time|restricted to a subset of cpus|TOPOLOGY: no switch|smartd\.service|Predictable network names|LNet.*deprecated|</TASK>|#\d+|build_script|Maximum GFX clk|\{\"@timestamp\":|filebeat|beat|TRACE|ROCm System Management Interface|xGMI error counters not enabled|Potentially caused by missing/incomplete job|No registered file transfer|telegraf\.service|stuck for \d+s|cray_power_management|dvsipc|craytrace|ksocklnd|lnet\(OEn\)|dvsproc|llc\(E\)|fmpm|Overwriting existing symlink|legacy kernel without|slabs: \d+|Traceback|nsprepkg|callbacks suppressed|scheduler tick|Activating service|Successfully activated|module .* already in this config|system status/update|exiting\.|Worker \[\d+\] failed|metric.* \(\d+\.\d+s\)|cpuset=|active=|refcnt=|flags=|node=|cpus=|libEGL warning|failed to enable I/O ports|Applying InputClass|is tagged by udev as|CPU features:|wait_time|C_ATU_STS_|syslog.socket|Current version of|Unknown error|mem-tx:|IA GA PC|CXI retry handler version|Not setting|Unable to get user's local|jackdbus|xfs filesystem .* supports timestamps|report bugs on|latest version|received this message due to a bug|timeout_backoff_multiplier|empty or malformed|X2APIC|NX|^\d+, \d+$|PC GA|GT IA|Failed to connect to avahi|Runtime directory .* not owned|checkname failed|PV .* online|VG .* complete|Module .* not loaded|\[\d+\]|Deferred|Supervising process|root directory access|step_|automatic interface scanning|reporting|tx:|compiled for|VG unknown|PPR|GT|Before reporting problems|process and the information|Using a default|Enabled .* GPEs|backoff_multiplier|This warning only shows|empty or null message|unit configures an IP firewall|is deprecated|WARNING: Use sudo|unknown input|bugs on either our web page|informational message about|system status/update|GA PC|Lustre: .* failed, not fatal|rcu: All QSes seen|cache: [\w_-]+, object size:|VG .* finished|amdgpu_irq_handle|failed to reload|supported: no, unsupported modules|ida_free called for|WARNING: \$ sudo|TaskKilled \(another attempt succeeded\)|TaskSetManager: Lost task"),
 }
 
-# ==============================================================================
-# 3. WORKER LOGIC (MANUAL READ + GENERATOR)
-# ==============================================================================
+
 def read_and_normalize_generator(file_path):
     """
     Reads a Parquet file in BATCHES and YIELDS rows.
     This fixes the MemoryError by never holding the whole file in RAM.
     """
     try:
-        # 1. Open File stream (low memory footprint)
         pf = pq.ParquetFile(file_path)
         
-        # 2. Iterate over Row Groups (Chunks)
+        # Iterate over Row Groups (Chunks)
         for batch in pf.iter_batches():
             df = batch.to_pandas()
 
-            # 3. Manual Schema Enforcement (The "Dirty Data" Fix)
-            # We enforce String on problematic columns immediately.
-            # This handles Int64 vs Double conflicts by turning everything to "123.0" or "123" string.
+            # Manual Schema Enforcement (The "Dirty Data" Fix)
             for col_name in ['pid', 'priority', 'facility', 'timestamp', 'log_message', 'command_line', 'name', 'identifier']:
                 if col_name in df.columns:
                     # Convert to string, handling NaNs
@@ -212,17 +180,13 @@ def read_and_normalize_generator(file_path):
                 else:
                     df[col_name] = None
 
-            # 4. Filter Columns
             required_cols = ['timestamp', 'log_message', 'command_line', 'pid', 'name', 'priority', 'identifier', 'facility']
             df_final = df[required_cols]
 
-            # 5. YIELD (Stream) rows to Spark - DO NOT RETURN LIST
-            # itertuples is faster than iterrows
             for row in df_final.itertuples(index=False, name=None):
                 yield row
                 
     except Exception as e:
-        # In the very worst case, we print but don't crash the whole job
         print(f"FAILED reading {file_path}: {e}")
         return
 
@@ -232,20 +196,17 @@ def classify_log_line(log_message):
     """
     if not log_message: return None
     
-    # 1. Check Architecture Specifics
+    # Check Architecture Specifics
     if "Machine Check" in log_message or ("MC" in log_message and "_STATUS" in log_message):
         mce_token = get_mc_bank_token(log_message)
         if mce_token: return mce_token
     
-    # 2. Check Patterns
+    
     for label, pattern in LOG_PATTERNS.items():
         if pattern.search(log_message):
             return label
     return None
 
-# ==============================================================================
-# 4. MAIN
-# ==============================================================================
 def main():
     start_time = time.time()
     print(f"JOB STARTED at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(start_time))}")
@@ -259,7 +220,7 @@ def main():
     sc = spark.sparkContext
     sc.setLogLevel("WARN")
 
-    # 1. Get File List
+    # Get File List
     print(f"Scanning files: {INPUT_DIR_PATTERN}")
     all_files = sorted(glob.glob(INPUT_DIR_PATTERN))
     print(f"Found {len(all_files):,} files.")
@@ -268,17 +229,11 @@ def main():
         print("No files found. Exiting.")
         return
 
-    # 2. Distribute File List
-    # High number of slices to ensure small tasks
     file_rdd = sc.parallelize(all_files, numSlices=min(len(all_files), 10000))
     
-    # 3. Parallel Read with GENERATOR
-    # flatMap consumes the generator lazily, preventing memory spikes.
     print("Reading files in parallel (Streamed)...")
     row_rdd = file_rdd.flatMap(read_and_normalize_generator)
     
-    # 4. Create DataFrame
-    # We use StringType for everything initially to be 100% safe against drift.
     schema = StructType([
         StructField("timestamp", StringType(), True),
         StructField("log_message", StringType(), True),
@@ -292,25 +247,23 @@ def main():
     
     df = spark.createDataFrame(row_rdd, schema=schema)
 
-    # 5. Type Casting (Clean up the numbers)
+    # Type Casting
     print("Standardizing types...")
     df_typed = df \
         .withColumn("pid", col("pid").cast(DoubleType()).cast(LongType())) \
         .withColumn("priority", col("priority").cast(DoubleType()).cast(LongType())) \
         .withColumn("facility", col("facility").cast(DoubleType()).cast(LongType()))
 
-    # 6. Apply Logic (UDF)
     matcher_udf = udf(classify_log_line, StringType())
     print("Applying Causal Tokens...")
     df_tagged = df_typed.withColumn("event_token", matcher_udf(col("log_message")))
     
-    # 7. Partition
+    # 
     df_final = df_tagged.withColumn("dataset_type", 
         when(col("event_token").isNotNull(), "parsed_logs")
         .otherwise("residuals")
     )
     
-    # 8. Write
     print(f"Streaming data to {OUTPUT_BASE}...")
     df_final.write \
         .mode("overwrite") \
