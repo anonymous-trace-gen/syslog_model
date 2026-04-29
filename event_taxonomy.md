@@ -9,7 +9,7 @@
 
 | Index | Event | Description |
 |-------|-------|-------------|
-| 0 | NET_CXI_RAW_DATA | CXI raw data event (high volume, often noisy) |
+| 0 | NET_CXI_RAW_DATA | CXI raw data event  |
 | 3 | NET_CXI_TIMEOUT | CXI operation timeout |
 | 5 | NET_CXI_LINK | CXI link event |
 | 7 | NET_CXI_WARN | CXI warning |
