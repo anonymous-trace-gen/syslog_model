@@ -2,7 +2,6 @@
 
 87 HPC event types from 18.4 billion classified Frontier log events, spanning 12 subsystems and categories.
 
-Note: the 12 category counts in Table 1a sum to 86. `SYS_X11_NOISE` (index 77) is the unaccounted event and is placed here under OS/Kernel, making that group 11.
 
 ## Taxonomy (12 subsystems)
 
