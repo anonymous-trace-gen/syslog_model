@@ -8,17 +8,6 @@ Reference hub for domain knowledge about the Frontier supercomputer at Oak Ridge
 |-------|------|-------------|
 | System Overview | [[overview/overview]] | Architecture, specifications, performance history, Summit comparison, allocation programs |
 
-## Physical Layout
-
-| Component | Note | Description |
-|-----------|------|-------------|
-| Data Center | [[layout/data-center]] | Building E102 floor plan, Mountain/River zones, grid coordinates, feeder routing |
-| Compute | [[layout/compute]] | Olympus cabinets, chassis, blades, node cards, xname encoding, cabinet grid |
-| Cooling Distribution | [[layout/cooling-distribution]] | CDU placement, coolant loops, manifold piping, HTW/CTW circuits |
-| Facility Cooling | [[layout/facility-cooling]] | Cooling towers, heat exchangers, chillers, pump systems, seasonal modes |
-| Power Delivery | [[layout/power-delivery]] | Feeders, transformers, switchboards, MSB-to-cabinet mapping, rectifiers |
-| Interconnect | [[layout/interconnect]] | Slingshot dragonfly topology, Rosetta switches, cable types, port allocation |
-| Storage | [[layout/storage]] | Orion/Lustre architecture, River zone layout, BAS3 network switches |
 
 ## Operations
 

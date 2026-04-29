@@ -172,35 +172,3 @@ Frontier held the #1 position for five consecutive TOP500 lists (June 2022 throu
 
 The Oak Ridge Leadership Computing Facility's mission is to provide capability computing resources for the most difficult problems to enable new scientific insights.
 
-### Allocation Programs
-
-- **INCITE** (Innovative and Novel Computational Impact on Theory and Experiment): Primary allocation program for leadership computing projects
-- **ALCC** (ASCR Leadership Computing Challenge): Additional allocation pathway for DOE mission science
-- **CAAR** (Center for Accelerated Application Readiness): Application optimization and porting support for Frontier-ready codes
-- **Director's Discretionary**: Exploratory and urgent allocations
-
-### Research Domains
-
-- Energy Technologies: Combustion, turbomachinery, nuclear reactor simulation
-- Materials Science: Alloy design, battery materials, superconductors
-- Climate and Environment: Earth system modeling, cloud-resolving simulations
-- Biology and Health: Protein dynamics, drug discovery
-- Fundamental Physics: Particle physics, astrophysics, stellar explosions, fusion energy
-
-### Gordon Bell Prize Achievements
-
-| Year | Prize | Project | Achievement |
-|------|-------|---------|-------------|
-| 2022 | Gordon Bell Prize | WarpX | First Gordon Bell winner on an exascale system; mesh-refined particle-in-cell plasma physics simulation |
-| 2023 | Gordon Bell Prize | Materials Modeling | 659.7 PFLOPS (43.1% peak) on 8,000 nodes; near-quantum-accuracy alloy simulation with 619,124 electrons |
-| 2023 | Gordon Bell Special Prize (Climate) | SCREAM | Simple Cloud Resolving E3SM Atmosphere Model; decades of cloud formation simulation |
-
-## Related Notes
-
-- [[layout/compute]] - Physical compute infrastructure including blade, chassis, and cabinet organization
-- [[layout/power-delivery]] - Electrical power delivery infrastructure from utility to rack
-- [[layout/interconnect]] - Slingshot network topology and cabling layout
-- [[operations/compute]] - CPU/GPU operational details and health monitoring
-- [[operations/power]] - Power operations, monitoring, and efficiency management
-- [[operations/cooling]] - Thermal management operations and procedures
-- [[telemetry/hardware-topology]] - Hardware naming conventions and xname hierarchy
